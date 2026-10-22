@@ -1,0 +1,21 @@
+
+# Python environment and cache
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+
+# Credentials
+.env
+.streamlit/secrets.toml
+
+# Local media and generated output
+data/uploads/
+data/processed/
+data/frames/
+data/reports/
+*.mp4
+*.wav
+
+# Local logs
+*.log

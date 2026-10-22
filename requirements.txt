@@ -1,0 +1,7 @@
+
+streamlit
+python-dotenv
+groq
+google-genai
+Pillow
+faster-whisper
