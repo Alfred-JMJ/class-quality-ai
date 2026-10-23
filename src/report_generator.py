@@ -70,6 +70,33 @@ def _as_string_list(value: Any) -> list[str]:
     return [item.strip() for item in value if isinstance(item, str) and item.strip()]
 
 
+def _friendly_error_message(message: Any, stage: str | None = None) -> str:
+    """Convert technical exceptions to brief report-safe wording."""
+    raw = str(message or "")
+    normalized = raw.lower()
+    stage_name = (stage or "").replace("_", " ").strip().lower()
+    provider_markers = (
+        "503", "unavailable", "429", "resource_exhausted", "rate limit",
+        "quota", "{'error:", '"error":', "{\"error\":", "traceback",
+        "api key", "permission_denied", "internal server error",
+    )
+    if any(marker in normalized for marker in provider_markers):
+        if "visual" in stage_name or "gemini" in normalized:
+            return "Visual analysis is temporarily unavailable."
+        if "assessment" in stage_name or "groq" in normalized or "llm" in normalized:
+            return "AI assessment is temporarily unavailable. A fallback result may be used."
+        return "A processing step is temporarily unavailable. The report may be incomplete."
+    if len(raw) > 180 or "{" in raw or "}" in raw:
+        if "visual" in stage_name:
+            return "Visual analysis could not be completed."
+        if "transcri" in stage_name:
+            return "Transcription could not be completed."
+        if "assessment" in stage_name:
+            return "Assessment could not be completed."
+        return "This processing step could not be completed."
+    return raw.strip() or "This processing step could not be completed."
+
+
 def _extract_transcript(transcription: Any) -> str:
     """Support the pipeline's transcription dict, segment lists, or plain text."""
     if isinstance(transcription, str):
@@ -195,7 +222,10 @@ def _collect_visual_evidence(visual_analysis: Any) -> dict:
             "provider": visual.get("provider", "gemini"),
             "model": visual.get("model"),
             "observations": {},
-            "message": visual.get("message") or "Visual observations were unavailable.",
+            "message": _friendly_error_message(
+                visual.get("message") or "Visual observations were unavailable.",
+                stage="visual_analysis",
+            ),
         }
 
     observations = _as_dict(visual.get("observations"))
@@ -294,9 +324,12 @@ def build_report(pipeline_result: dict) -> dict:
             {
                 "stage": item.get("stage", "unknown"),
                 "error_type": item.get("error_type", "Error"),
-                # Avoid printing full exception details in the user-facing report;
-                # they may contain local paths or provider request details.
-                "message": str(item.get("message", "Processing error"))[:300],
+                # Reports intentionally contain only friendly summaries, never
+                # raw provider payloads, JSON bodies, or exception details.
+                "message": _friendly_error_message(
+                    item.get("message", "Processing error"),
+                    stage=str(item.get("stage", "unknown")),
+                ),
             }
             for item in errors if isinstance(item, dict)
         ],
@@ -437,18 +470,18 @@ def render_markdown_report(report: dict) -> str:
         )
 
     errors = report.get("processing_errors", [])
-    lines.extend(["", "## Missing evidence and processing errors", ""])
+    lines.extend(["", "## Processing notes", ""])
     if not errors:
-        lines.append("No pipeline stage errors were recorded.")
+        lines.append("No processing issues were recorded.")
     else:
         lines.append(
-            "One or more stages did not complete. Interpret the report with this limitation:"
+            "Some processing steps could not be completed. Results may be incomplete; "
+            "please review the available evidence."
         )
         for error in errors:
-            lines.append(
-                f"- **{error.get('stage', 'unknown')}** — "
-                f"{error.get('error_type', 'Error')}: {error.get('message', '')}"
-            )
+            stage = str(error.get("stage", "Processing step")).replace("_", " ").title()
+            friendly_message = _friendly_error_message(error.get("message"), stage=stage)
+            lines.append(f"- **{stage}:** {friendly_message}")
 
     limitations = _as_string_list(assessment.get("limitations"))
     lines.extend(["", "## Assessment limitations", ""])
